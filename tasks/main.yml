@@ -1,0 +1,48 @@
+- name: Web backup (with database)
+  copy:
+    src: usr/local/bin/webmirror
+    dest: /usr/local/bin/webmirror
+    mode: '0755'
+
+- name: Installing utilities and some PHP DEV essentials
+  apt:
+    name: "{{ packages }}"
+    state: present
+  vars:
+    packages:
+      - nodejs
+      - npm
+      - php7.3-curl
+      - php7.3-gd
+      - php7.3-xml
+      - ruby-dev
+      - ruby-sass
+
+- name: Install phpdox
+  get_url:
+    url: https://github.com/theseer/phpdox/releases/download/{{ phpdox_version }}/phpdox-{{ phpdox_version }}.phar
+    dest: /usr/local/bin/phpdox
+
+- name: Download and install Composer
+  shell: curl -sS https://getcomposer.org/installer | php
+  args:
+    chdir: /usr/src/
+    creates: /usr/local/bin/composer
+    warn: false
+  become: yes
+
+- name: Add Composer to global path
+  copy:
+    dest: /usr/local/bin/composer
+    group: root
+    mode: '0755'
+    owner: root
+    src: /usr/src/composer.phar
+    remote_src: yes
+  become: yes
+
+- name: Install LESS
+  shell: npm install -g less
+
+- name: Install SASS
+  shell: gem install compass bootstrap-sass

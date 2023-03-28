@@ -1,0 +1,251 @@
+#!/bin/bash
+
+PHPSCRIPT=$(cat << 'EOF'
+<?php
+$host='{{host}}'; // MUST specify also port if different from standard
+$db='{{db}}';
+$user='{{user}}';
+$password='{{password}}';
+//ini_set('display_errors', 1);
+//error_reporting(E_ALL);
+ini_set("memory_limit", -1);
+set_time_limit(3600);
+$fn = dirname(__FILE__)."/".sha1($db).'.sql';
+# try {
+#   exec("mysqldump --no-tablespaces -u$user -h$host -p$password $db -r $fn");
+# } catch (Exception $e) {
+try {
+    $mysqli = new mysqli($host, $user, $password, $db);
+    /* one multi query */
+    $query = "SELECT CONCAT('OPTIMIZE TABLE ', GROUP_CONCAT(CONCAT(table_schema,'.',table_name)),';') INTO @optimizecmd FROM information_schema.tables WHERE table_schema=database(); PREPARE s1 FROM @optimizecmd; EXECUTE s1;";
+    if ($mysqli->multi_query($query)) {
+        do {
+            /* store first result set */
+            if ($result = $mysqli->store_result()) {
+                while ($row = $result->fetch_row()) {
+                    printf("%s\n", $row[0]);
+                }
+                $result->free();
+            }
+            if ($mysqli->more_results()) {
+                /* do something here */
+            }
+        } while ($mysqli->next_result());
+    }
+
+    $mysqli->close();
+} catch (Exception $e) {
+    echo $e->getMessage();
+}
+file_put_contents('Mysqldump.php', file_get_contents('https://raw.githubusercontent.com/ifsnop/mysqldump-php/master/src/Ifsnop/Mysqldump/Mysqldump.php'));
+include('Mysqldump.php');
+$dump = new Ifsnop\Mysqldump\Mysqldump("mysql:host=$host;dbname=$db", $user, $password);
+$dump->start($fn);
+# }
+if (file_exists($fn)) {
+    set_time_limit(3600);
+    header('Content-Description: File Transfer');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename='.basename($fn));
+    header('Content-Transfer-Encoding: binary');
+    header('Expires: 0');
+    header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+    header('Pragma: public');
+    header('Content-Length: '.filesize($fn));
+    ob_clean();
+    flush();
+    readfile($fn);
+    unlink($fn);
+    //die();
+}
+unlink('Mysqldump.php');
+unlink(__FILE__);
+EOF
+)
+
+DEFAULTLFTPOPTS="set ftp:list-options -a;set ssl:check-hostname no;set ftp:use-mlsd off;set ssl:verify-certificate false"
+
+function helpme {
+  echo -e "Not found $CFG_FILE\n"\
+       "It should contain something like this:\n"\
+       "PROTOCOL=ftp\n"\
+       "HOST=HOST/IP\n"\
+       "PORT=PORT\n"\
+       "REMOTEDIR=/html\n"\
+       "USER=ftpuser\n"\
+       "PASS=ftppassword\n"\
+       "DBHOST=databasehost\n"\
+       "DBUSER=databaseuser\n"\
+       "DBPASS=databasepassword\n"\
+       "DBNAME=databasename\n"\
+       "DBREMOTE=0\n"\
+       "LFTPOPTS=set ssl:verify-certificate no;set ftp:ssl-protect-data yes;"
+       "EXCLUDED=.git sincronizador plugins/system/comvirtuemartoverride"
+  exit 254
+}
+
+function show_options {
+  echo "Usage: $(basename $0) [-d|-f|-h] [config file]"
+  echo "At first will try to open 'webmirror.conf' on current dir. If it is needed another"
+  echo "configuration, we should specify it on command line."
+  echo -e "  -h | --help\t\tShow this help."
+  echo -e "  -d | --only-db\tBackup only database."
+  echo -e "  -f | --only-files\tBackup only files."
+  echo -e "  -o | --optimize-db\tOptimize DB tables."
+}
+
+function backup_files {
+  EXCLUDES=''
+  for i in $EXCLUDED; do
+    EXCLUDES="$EXCLUDES --exclude $i"
+  done
+  echo $EXCLUDES
+  echo $LFTPCMD -e "\"$LFTPOPTS;mirror --use-pget-n=10 --log=$LOG $EXCLUDES --only-newer --delete $REMOTEDIR $LOCALDIR;exit;\""
+  $LFTPCMD -e "$LFTPOPTS;mirror --use-pget-n=10 --log=$LOG $EXCLUDES --only-newer --delete $REMOTEDIR $LOCALDIR;exit;"
+  if [ ! $? -eq 0 ]; then
+    echo "$(date "+%d/%m/%Y-%T") Error en la descarga. Comprueba los datos" >> "$LOG"
+  else
+    echo "Archivos copiados." >> "$LOG"
+    echo "Archivos copiados."
+  fi
+}
+
+function backup_db {
+  if [[ -z ${DBREMOTE+x} || "$DBREMOTE" = "0" ]]
+  then
+    backup_host_db
+  else
+    backup_remote_db
+  fi
+  if [ ! $? -eq 0 ]; then
+    echo "Error el backup de la base de datos." >> "$LOG"
+  else
+    echo "Copia realizada ($(basename "${DBFILE}"))." >> "$LOG"
+    echo "Copia realizada ($(basename "${DBFILE}"))."
+  fi
+}
+
+function optimize_tables {
+  TBLLIST=""
+  COMMA=""
+  SQL="SELECT CONCAT(table_schema,'.',table_name) FROM information_schema.tables WHERE"
+  SQL="${SQL} table_schema NOT IN ('information_schema','mysql','performance_schema')"
+  for DBTB in `mysql ${MYSQL_CONN} -ANe"${SQL}"`
+  do
+      # echo OPTIMIZE TABLE "${DBTB};"
+      # SQL="OPTIMIZE TABLE ${DBTB};"
+      mysql ${MYSQL_CONN} -ANe"OPTIMIZE TABLE ${DBTB};"
+  done
+}
+
+function backup_host_db {
+  mysqldump --no-tablespaces $MYSQL_CONN "$DBNAME" > "$DBFILE"
+  return $?
+}
+
+function backup_remote_db {
+  TFILE="$THIS_DIR/$HASH.php"
+  echo "$PHPSCRIPT" | sed "s|{{host}}|$DBHOST|g" | sed "s|{{db}}|$DBNAME|g" | sed "s|{{user}}|$DBUSER|g" | sed "s|{{password}}|$DBPASS|g" > "$TFILE"
+  $LFTPCMD -e "$LFTPOPTS;put -O ${REMOTEDIR} ${TFILE};exit;"
+  wget --no-check-certificate -O "$DBFILE" "$HOST/$(basename "$TFILE")"
+}
+
+function ensure_dir {
+  if [ ! -d "$1" ]
+  then
+    mkdir "$1"
+  fi
+}
+
+function finish {
+  err=$?
+  /usr/bin/rm -f $LOCKFILE
+  trap '' EXIT INT TERM
+  exit $err
+}
+
+POSITIONAL_ARGS=()
+
+ONLYDB=''
+ONLYFILES=''
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -d|--only-db)
+      ONLYDB='YES'
+      shift # past argument
+      ;;
+    -f|--only-files)
+      ONLYFILES='YES'
+      shift # past argument
+      ;;
+    -h|--help)
+      shift # past argument
+      show_options
+      exit 0
+      ;;
+    -o|--optimize-db)
+      OPTIMIZEDB='YES'
+      shift # past argument
+      ;;
+    -*|--*)
+      echo "Unknown option $1"
+      exit 1
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1") # save positional arg
+      shift # past argument
+      ;;
+  esac
+done
+
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+THIS_DIR=$(pwd)
+
+if [ $# -eq 0 ]
+then
+  CFG_FILE=$THIS_DIR"/webmirror.conf"
+else
+  CFG_FILE=$1
+fi
+
+if [ ! -f "$CFG_FILE" ]
+then
+  helpme
+else
+  while read -r LINE; do declare "$LINE"; done < "$CFG_FILE"
+  LFTPOPTS="${DEFAULTLFTPOPTS}${LFTPOPTS}"
+fi
+
+LOCALDIR=${THIS_DIR}"/web"
+LOGDIR=${THIS_DIR}"/log"
+SQLDIR=$THIS_DIR"/sql"
+LOG="${LOGDIR}/$(date +"%Y_%m_%d-%H_%M")-webmirror.log"
+DBFILE="${SQLDIR}/$(date +"%Y_%m_%d-%H_%M")-${DBNAME}.sql"
+HASH=$(echo "$LOCALDIR" | md5sum | head -c 20; echo;)
+LOCKFILE="/tmp/$HASH.lock"
+MYSQL_CONN=" -h"$DBHOST" -u${DBUSER} -p${DBPASS}"
+if [ "" != "${PORT}" ] && [ "${PORT}" != ":${PORT}" ]
+then
+  PORT=":${PORT}"
+fi
+LFTPCMD="lftp -u $USER,$PASS $PROTOCOL://${HOST}${PORT}"
+
+ensure_dir "$SQLDIR"
+ensure_dir "$LOGDIR"
+ensure_dir "$LOCALDIR"
+
+if [ ! -e "$LOCKFILE" ]
+then
+  trap finish INT TERM ERR EXIT
+  echo "Configuración: ${CFG_FILE}" > "$LOG"
+  touch "$LOCKFILE"
+  if [ "$ONLYDB" != 'YES' ]; then backup_files; fi
+  if [ "$OPTIMIZEDB" == 'YES' ]; then optimize_tables; fi
+  if [ "$ONLYFILES" != 'YES' ]; then backup_db; fi
+else
+  echo "Ya se está haciendo la copia de $THIS_DIR"
+  exit
+fi
+exit
