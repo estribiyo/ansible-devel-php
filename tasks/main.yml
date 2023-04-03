@@ -44,5 +44,5 @@
 - name: Install LESS
   shell: npm install -g less
 
-- name: Install SASS
-  shell: gem install compass bootstrap-sass
+# - name: Install SASS
+#   shell: gem install compass bootstrap-sass
