@@ -19,18 +19,17 @@ try {
     /* one multi query */
     $query = "SELECT CONCAT('OPTIMIZE TABLE ', GROUP_CONCAT(CONCAT(table_schema,'.',table_name)),';') INTO @optimizecmd FROM information_schema.tables WHERE table_schema=database(); PREPARE s1 FROM @optimizecmd; EXECUTE s1;";
     if ($mysqli->multi_query($query)) {
+        print("-- Optimización:\n\n");
         do {
             /* store first result set */
             if ($result = $mysqli->store_result()) {
                 while ($row = $result->fetch_row()) {
-                    printf("%s\n", $row[0]);
+                    printf("-- Tabla optimizada: %s\n", $row[0]);
                 }
                 $result->free();
             }
-            if ($mysqli->more_results()) {
-                /* do something here */
-            }
         } while ($mysqli->next_result());
+        print("\n\n");
     }
 
     $mysqli->close();
@@ -128,7 +127,7 @@ function backup_db {
 function optimize_tables {
   TBLLIST=""
   COMMA=""
-  SQL="SELECT CONCAT(table_schema,'.',table_name) FROM information_schema.tables WHERE"
+  SQL="SELECT CONCAT(table_schema,'.','\`',table_name,'\`') FROM information_schema.tables WHERE"
   SQL="${SQL} table_schema NOT IN ('information_schema','mysql','performance_schema')"
   for DBTB in `mysql ${MYSQL_CONN} -ANe"${SQL}"`
   do
@@ -222,7 +221,8 @@ LOCALDIR=${THIS_DIR}"/web"
 LOGDIR=${THIS_DIR}"/log"
 SQLDIR=$THIS_DIR"/sql"
 LOG="${LOGDIR}/$(date +"%Y_%m_%d-%H_%M")-webmirror.log"
-DBFILE="${SQLDIR}/$(date +"%Y_%m_%d-%H_%M")-${DBNAME}.sql"
+# DBFILE="${SQLDIR}/$(date +"%Y_%m_%d-%H_%M")-${DBNAME}.sql"
+DBFILE="${SQLDIR}/${DBNAME}.sql"
 HASH=$(echo "$LOCALDIR" | md5sum | head -c 20; echo;)
 LOCKFILE="/tmp/$HASH.lock"
 MYSQL_CONN=" -h"$DBHOST" -u${DBUSER} -p${DBPASS}"
