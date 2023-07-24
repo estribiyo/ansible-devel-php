@@ -12,9 +12,9 @@
     packages:
       - nodejs
       - npm
-      - php7.3-curl
-      - php7.3-gd
-      - php7.3-xml
+      - php7.4-curl
+      - php7.4-gd
+      - php7.4-xml
       - ruby-dev
       - ruby-sass
 
